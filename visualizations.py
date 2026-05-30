@@ -5,13 +5,16 @@ All chart, graph, and visual-rendering functions for NEXUS.
 
 Exports
 -------
-create_animated_bar_chart(results_df)   → renders ECharts grouped bar chart
-create_scaling_line_chart(results_df)   → renders Plotly spline scaling chart
-create_heatmap(results_df)              → renders Plotly neon heatmap
-render_tree_graph(nodes, edges, name)   → renders agraph physics tree
-render_array_visualization(data, hi)    → renders HTML array blocks
-render_analysis_panel(analysis_dict)    → renders AnalysisGenerator output
-render_podium(podium_dict)              → renders animated top-3 podium
+create_animated_bar_chart(results_df)      → ECharts grouped bar chart
+create_scaling_line_chart(results_df)      → Plotly spline scaling chart
+create_heatmap(results_df)                 → Plotly neon heatmap
+render_tree_graph(nodes, edges, name)      → agraph physics tree
+render_array_visualization(data, hi)       → HTML array blocks
+render_analysis_panel(analysis_dict)       → AnalysisGenerator output
+render_podium(podium_dict)                  → animated top-3 podium
+render_metrics_row(results_df)              → metric cards row
+render_height_comparison(bst_h, avl_h)      → Plotly height bar chart
+render_hash_collision(buckets)              → Plotly bucket occupancy
 
 Dependencies (pip install):
     plotly  streamlit-echarts==0.4.0  streamlit-agraph  streamlit
@@ -31,6 +34,20 @@ import plotly.graph_objects as go
 
 # ── agraph ───────────────────────────────────────────────────────────────────
 from streamlit_agraph import agraph, Node, Edge, Config
+
+# ── explicit exports (forces clean bytecode on Streamlit Cloud) ──────────────
+__all__ = [
+    "create_animated_bar_chart",
+    "create_scaling_line_chart",
+    "create_heatmap",
+    "render_tree_graph",
+    "render_array_visualization",
+    "render_analysis_panel",
+    "render_podium",
+    "render_metrics_row",
+    "render_height_comparison",
+    "render_hash_collision",
+]
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  COLOUR PALETTE  (single source of truth)
