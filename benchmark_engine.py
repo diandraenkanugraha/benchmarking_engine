@@ -186,12 +186,14 @@ class BenchmarkRunner:
 
     def __init__(
         self,
-        n_repeats:          int = 5,
-        search_sample_size: int = 100,
+        n_repeats:            int   = 5,
+        search_sample_ratio:  float = 0.01,
+        min_sample:           int   = 100,
     ) -> None:
-        self._n_repeats          = n_repeats
-        self._search_sample_size = search_sample_size
-        self._generator          = DatasetGenerator()
+        self._n_repeats            = n_repeats
+        self._search_sample_ratio  = search_sample_ratio
+        self._min_sample           = min_sample
+        self._generator            = DatasetGenerator()
 
     # ── public API ───────────────────────────────────────────────────────────
 
@@ -291,6 +293,24 @@ class BenchmarkRunner:
 
         return pd.DataFrame(rows)
 
+    # ── private: helpers ─────────────────────────────────────────────────────
+
+    def _get_search_sample_size(self, dataset_size: int) -> int:
+        """
+        Return a proportional sample size, never below ``_min_sample``.
+
+        Parameters
+        ----------
+        dataset_size : int
+            Total number of elements in the dataset.
+
+        Returns
+        -------
+        int
+            ``max(self._min_sample, int(dataset_size * self._search_sample_ratio))``
+        """
+        return max(self._min_sample, int(dataset_size * self._search_sample_ratio))
+
     # ── private: per-operation timers ────────────────────────────────────────
 
     def _bench_insert(self, ds_instance: Any, dataset: list[int]) -> float:
@@ -343,7 +363,7 @@ class BenchmarkRunner:
             Average search time in ms over ``n_repeats`` runs.
         """
         targets = self._generator.generate_search_targets(
-            dataset, self._search_sample_size
+            dataset, self._get_search_sample_size(len(dataset))
         )
 
         # ── build the populated structure (not timed) ────────────────────────
@@ -406,7 +426,7 @@ class BenchmarkRunner:
             Average delete time in ms over ``n_repeats`` runs.
         """
         targets = self._generator.generate_search_targets(
-            dataset, self._search_sample_size, seed_offset=2
+            dataset, self._get_search_sample_size(len(dataset)), seed_offset=2
         )
 
         # ── build the structure once (not timed) ─────────────────────────────
@@ -464,6 +484,30 @@ class AnalysisGenerator:
         "AVL Tree":        {"insert": "O(log n)", "search": "O(log n)", "delete": "O(log n)"},
     }
 
+    # Static pros/cons for each data structure
+    _PROS_CONS: dict[str, dict[str, str]] = {
+        "Array (Linear)": {
+            "kelebihan":   "O(1) insert (amortised), cache-friendly, memori kontigu, sederhana",
+            "kekurangan":  "O(n) search dan delete, ukuran tetap (perlu resize), tidak fleksibel",
+        },
+        "Array (Binary)": {
+            "kelebihan":   "O(1) insert, O(log n) search setelah diurutkan, cache-friendly",
+            "kekurangan":  "O(n log n) untuk sort awal, O(n) delete, perlu data terurut",
+        },
+        "Hash Table": {
+            "kelebihan":   "O(1) rata-rata untuk semua operasi, sangat cepat untuk lookup",
+            "kekurangan":  "O(n) worst-case, boros memori, tidak terurut, collision overhead",
+        },
+        "BST": {
+            "kelebihan":   "O(log n) rata-rata, data terurut natural (in-order traversal)",
+            "kekurangan":  "Degenerasi O(n) pada data sorted/descending, tidak seimbang",
+        },
+        "AVL Tree": {
+            "kelebihan":   "O(log n) terjamin untuk semua operasi, selalu balanced",
+            "kekurangan":  "Rotasi overhead pada insert/delete, implementasi kompleks",
+        },
+    }
+
     # ── public API ───────────────────────────────────────────────────────────
 
     def generate_analysis(self, results_df: pd.DataFrame) -> dict:
@@ -481,6 +525,9 @@ class AnalysisGenerator:
         ``"complexity_comparison"``   : dict – theoretical vs observed notes
         ``"recommendation"``          : str – overall recommendation paragraph
         ``"podium"``                  : dict[str, list[str]] – top-3 per operation
+        ``"bst_vs_avl_degradation"``  : list[str] – how BST degrades on sorted data vs AVL
+        ``"pros_and_cons"``           : dict[str, dict[str, str]] – theoretical kelebihan/kekurangan
+        ``"theory_vs_practice"``      : dict[str, str] – Big-O compared to experimental scaling
 
         Parameters
         ----------
@@ -621,7 +668,16 @@ class AnalysisGenerator:
 
         insights["complexity_comparison"] = complexity_notes
 
-        # ── 6. Overall recommendation paragraph ──────────────────────────────
+        # ── 6. BST vs AVL degradation analysis ────────────────────────────────
+        insights["bst_vs_avl_degradation"] = self._bst_vs_avl_degradation(df)
+
+        # ── 7. Pros and cons (static theoretical) ─────────────────────────────
+        insights["pros_and_cons"] = self._PROS_CONS
+
+        # ── 8. Theory vs practice ─────────────────────────────────────────────
+        insights["theory_vs_practice"] = self._theory_vs_practice(df)
+
+        # ── 9. Overall recommendation paragraph ──────────────────────────────
         best_search  = mean_by_struct["search_ms"].idxmin()
         best_insert  = mean_by_struct["insert_ms"].idxmin()
         best_delete  = mean_by_struct["delete_ms"].idxmin()
@@ -644,6 +700,107 @@ class AnalysisGenerator:
         )
 
         return insights
+
+    # ── private: BST vs AVL degradation ───────────────────────────────────────
+
+    def _bst_vs_avl_degradation(self, df: pd.DataFrame) -> list[str]:
+        """
+        Compare BST and AVL search performance on sorted/descending data.
+        Returns a list of human-readable strings quantifying the gap.
+        """
+        notes: list[str] = []
+        degraded_types = ["sorted", "descending"]
+
+        for dt in degraded_types:
+            sub = df[df["data_type"] == dt]
+            if sub.empty:
+                continue
+
+            bst = sub[sub["structure"].str.contains("BST", case=False, regex=False)]
+            avl = sub[sub["structure"].str.contains("AVL", case=False, regex=False)]
+            if bst.empty or avl.empty:
+                continue
+
+            for size in sorted(sub["size"].unique()):
+                bst_time = bst[bst["size"] == size]["search_ms"].mean()
+                avl_time = avl[avl["size"] == size]["search_ms"].mean()
+
+                if bst_time > 0 and avl_time > 0 and bst_time > avl_time * 1.5:
+                    ratio = bst_time / avl_time
+                    label = "terurut (sorted)" if dt == "sorted" else "menurun (descending)"
+                    notes.append(
+                        f"Pada data {label} (n={size}), BST {ratio:.1f}x lebih lambat "
+                        f"dari AVL karena degenerasi menjadi Linked List O(n), "
+                        f"sementara AVL tetap terbalance O(log n)."
+                    )
+
+        return notes if notes else [
+            "Tidak ada degradasi signifikan BST terdeteksi pada dataset ini."
+        ]
+
+    # ── private: theory vs practice ────────────────────────────────────────────
+
+    def _theory_vs_practice(self, df: pd.DataFrame) -> dict[str, str]:
+        """
+        Compare theoretical Big-O notations with experimental scaling ratios.
+        For each pair of sizes where one is ~10x the other, compute the time
+        ratio and classify whether it supports O(1), O(log n), or O(n).
+        """
+        sizes = sorted(df["size"].unique())
+        if len(sizes) < 2:
+            return {"info": "Diperlukan minimal 2 ukuran dataset untuk analisis scaling."}
+
+        # Find the pair closest to 10x apart
+        target_pair: tuple[int, int] | None = None
+        for i in range(len(sizes)):
+            for j in range(i + 1, len(sizes)):
+                ratio = sizes[j] / sizes[i]
+                if 8 <= ratio <= 12:
+                    target_pair = (sizes[i], sizes[j])
+                    break
+            if target_pair is not None:
+                break
+
+        if target_pair is None:
+            target_pair = (sizes[0], sizes[-1])
+
+        small, large = target_pair
+        actual_scale = large / small
+        results: dict[str, str] = {}
+
+        for struct in sorted(df["structure"].unique()):
+            sub = df[df["structure"] == struct]
+            if sub.empty:
+                continue
+
+            for op, col in [
+                ("Insert", "insert_ms"),
+                ("Search", "search_ms"),
+                ("Delete", "delete_ms"),
+            ]:
+                t_small = sub[sub["size"] == small][col].mean()
+                t_large = sub[sub["size"] == large][col].mean()
+
+                if t_small <= 0:
+                    continue
+
+                time_ratio = t_large / t_small
+                label = f"{struct} {op}"
+
+                if time_ratio < 1.3:
+                    verdict = f"Mendukung O(1) — waktu hampir konstan (rasio {time_ratio:.2f}x)"
+                elif time_ratio < 2.5:
+                    verdict = f"Mendukung O(log n) — waktu tumbuh logaritmik (rasio {time_ratio:.2f}x)"
+                elif time_ratio < actual_scale * 0.6:
+                    verdict = f"Cenderung O(log n) — tumbuh lambat (rasio {time_ratio:.2f}x)"
+                elif time_ratio < actual_scale * 1.5:
+                    verdict = f"Mendukung O(n) — waktu tumbuh linear (rasio {time_ratio:.2f}x)"
+                else:
+                    verdict = f"Mendukung O(n log n) atau lebih — tumbuh super-linear (rasio {time_ratio:.2f}x)"
+
+                results[label] = verdict
+
+        return results
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -676,7 +833,7 @@ if __name__ == "__main__":
     print("DatasetGenerator  ✓")
 
     # ── BenchmarkRunner ──────────────────────────────────────────────────────
-    runner  = BenchmarkRunner(n_repeats=3, search_sample_size=20)
+    runner  = BenchmarkRunner(n_repeats=3, min_sample=20)
     dataset = gen.generate(500, "random")
 
     for DS, name in [
@@ -691,7 +848,7 @@ if __name__ == "__main__":
         print(f"  BenchmarkRunner [{name:10s}]  ✓")
 
     # ── run_full_suite ───────────────────────────────────────────────────────
-    runner2 = BenchmarkRunner(n_repeats=2, search_sample_size=10)
+    runner2 = BenchmarkRunner(n_repeats=2, min_sample=10)
     df = runner2.run_full_suite(
         AVLTreeDS, "AVL Tree",
         sizes=[100, 500],
@@ -705,7 +862,7 @@ if __name__ == "__main__":
     # ── AnalysisGenerator ────────────────────────────────────────────────────
     # Build a small combined DataFrame for analysis
     frames = []
-    small_runner = BenchmarkRunner(n_repeats=2, search_sample_size=10)
+    small_runner = BenchmarkRunner(n_repeats=2, min_sample=10)
     for DS, label in [
         (ArrayDS,            "Array"),
         (HashTableDS,        "Hash Table"),
@@ -724,12 +881,20 @@ if __name__ == "__main__":
         "overall_winner_insert", "overall_winner_search", "overall_winner_delete",
         "summary_table", "scaling_insights", "data_type_insights",
         "complexity_comparison", "recommendation", "podium",
+        "bst_vs_avl_degradation", "pros_and_cons", "theory_vs_practice",
     }
     missing = required_keys - result.keys()
     assert not missing, f"Missing keys in analysis: {missing}"
     assert isinstance(result["summary_table"], pd.DataFrame)
     assert isinstance(result["scaling_insights"], list)
     assert isinstance(result["recommendation"], str)
+    assert isinstance(result["bst_vs_avl_degradation"], list)
+    assert isinstance(result["pros_and_cons"], dict)
+    assert isinstance(result["theory_vs_practice"], dict)
+    # Verify pros_and_cons covers all five structures
+    expected_structures = {"Array (Linear)", "Array (Binary)", "Hash Table", "BST", "AVL Tree"}
+    assert set(result["pros_and_cons"].keys()) == expected_structures, \
+        f"pros_and_cons missing structures: {expected_structures - set(result['pros_and_cons'].keys())}"
     print("AnalysisGenerator           ✓")
 
     print("\nAll benchmark_engine tests passed ✓")

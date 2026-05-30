@@ -36,6 +36,7 @@ class ArrayDS:
     def __init__(self) -> None:
         """Initialise an empty array."""
         self._data: list[int] = []
+        self._is_sorted: bool = True
 
     # ── public API ──────────────────────────────────────────────
 
@@ -51,6 +52,7 @@ class ArrayDS:
             The integer to append.
         """
         self._data.append(value)
+        self._is_sorted = False
 
     def search(self, value: int) -> bool:
         """
@@ -70,8 +72,10 @@ class ArrayDS:
 
     def binary_search(self, value: int) -> bool:
         """
-        Binary search on a *sorted* copy – O(n log n) due to sort,
-        then O(log n) for the search itself.
+        Binary search – O(log n) after a one‑time lazy sort.
+
+        The first call after any insert/delete triggers a sort of the
+        internal array, then caches the sorted state via ``_is_sorted``.
 
         Parameters
         ----------
@@ -83,8 +87,10 @@ class ArrayDS:
         bool
             True if found, False otherwise.
         """
-        sorted_data = self._merge_sort(self._data[:])
-        return self._binary_search(sorted_data, value, 0, len(sorted_data) - 1)
+        if not self._is_sorted:
+            self._data = self._merge_sort(self._data)
+            self._is_sorted = True
+        return self._binary_search(self._data, value, 0, len(self._data) - 1)
 
     def delete(self, value: int) -> bool:
         """
@@ -112,6 +118,7 @@ class ArrayDS:
         for i in range(idx, len(self._data) - 1):
             self._data[i] = self._data[i + 1]
         self._data.pop()          # shrink by one slot
+        self._is_sorted = False
         return True
 
     def get_data(self) -> list[int]:
@@ -309,6 +316,32 @@ class HashTableDS:
         """Return the number of live entries."""
         return self._size
 
+    def get_bucket_state(self, max_buckets: int = 50) -> list[int]:
+        """
+        Return bucket occupancy for visualisation.
+
+        Parameters
+        ----------
+        max_buckets : int
+            Maximum number of buckets to report (default 50).
+
+        Returns
+        -------
+        list[int]
+            Each element is ``0`` (empty), ``1`` (filled), or ``2`` (tombstone).
+        """
+        n = min(self._capacity, max_buckets)
+        result: list[int] = []
+        for i in range(n):
+            slot = self._table[i]
+            if slot is None:
+                result.append(0)
+            elif slot is _DELETED:
+                result.append(2)
+            else:
+                result.append(1)
+        return result
+
     # ── private helpers ─────────────────────────────────────────
 
     def _hash(self, value: int) -> int:
@@ -460,6 +493,32 @@ class BinarySearchTreeDS:
     def size(self) -> int:
         """Return the number of nodes in the tree."""
         return self._size
+
+    def get_height(self) -> int:
+        """
+        Return the height of the tree (0 if empty).
+
+        Time complexity: O(n).
+
+        Returns
+        -------
+        int
+            Height of the root node, or 0 if the tree is empty.
+        """
+        return self._get_height_rec(self._root)
+
+    # ── private helpers (existing) ───────────────────────────────
+
+    def _get_height_rec(
+        self,
+        node: Optional[_BSTNode],
+    ) -> int:
+        if node is None:
+            return 0
+        return 1 + max(
+            self._get_height_rec(node.left),
+            self._get_height_rec(node.right),
+        )
 
     def inorder(self) -> list[int]:
         """Return a sorted list of all values (in-order traversal)."""
@@ -671,6 +730,10 @@ class AVLTreeDS:
     def size(self) -> int:
         """Return the number of nodes."""
         return self._size
+
+    def get_height(self) -> int:
+        """Return the height of the AVL tree."""
+        return self._height(self._root)
 
     def inorder(self) -> list[int]:
         """Return a sorted list of all values."""

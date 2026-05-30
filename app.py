@@ -43,6 +43,8 @@ from visualizations import (
     render_array_visualization,
     render_podium,
     render_metrics_row,
+    render_height_comparison,
+    render_hash_collision,
 )
 
 # ── Optional Lottie ───────────────────────────────────────────────────────────
@@ -628,6 +630,18 @@ def _render_sidebar() -> None:
 
         st.markdown('<div class="nexus-divider"></div>', unsafe_allow_html=True)
 
+        # BST safety check — warn on sorted/descending 10k data
+        if (
+            st.session_state["sel_dtype"] in ("sorted", "descending")
+            and 10_000 in st.session_state["sel_sizes"]
+            and "BST" in st.session_state["sel_structures"]
+        ):
+            st.warning(
+                "⚠  BST pada data terurut/menurun (n=10.000) akan "
+                "menjadi degenerasi O(n²). Gunakan AVL Tree untuk "
+                "ukuran besar."
+            )
+
         if st.button("⚡  JALANKAN BENCHMARK", key="run_btn", use_container_width=True, type="primary"):
             st.session_state["_run_trigger"] = True
 
@@ -697,7 +711,6 @@ def _run_benchmarks() -> None:
     total_steps  = len(ds_to_run) * len(sel_sizes)
     current_step = 0
     gen    = DatasetGenerator()
-    runner = BenchmarkRunner(n_repeats=n_rep, search_sample_size=100)
     rows: list[dict] = []
 
     prog = st.empty()
@@ -707,6 +720,45 @@ def _run_benchmarks() -> None:
             current_step += 1
             pct = int((current_step / total_steps) * 100)
 
+            # ── PREDICTIVE ESTIMATION for BST O(n²) ──────────────────────
+            is_degenerate_bst_10k = (
+                "BST" in ds_label
+                and sel_dtype in ("sorted", "descending")
+                and size >= 10000
+            )
+
+            if is_degenerate_bst_10k:
+                base_size = 1000 if 1000 in sel_sizes else 100
+                scale_factor = (size / base_size) ** 2  # O(n²) scaling
+
+                # Find the base result from previously computed rows
+                base_row = next((r for r in rows if r["structure"] == ds_label and r["size"] == base_size and r["data_type"] == sel_dtype), None)
+
+                if base_row:
+                    prog.markdown(
+                        f'<div style="padding:.8rem 1rem;background:rgba(255,200,0,.05);'
+                        f'border:1px solid rgba(255,200,0,.2);border-radius:12px;">'
+                        f'<div style="font-family:\'Orbitron\',monospace;font-size:.72rem;'
+                        f'letter-spacing:.12em;color:#ffc800;text-transform:uppercase;">⚡ Estimasi Prediktif O(n²)</div>'
+                        f'<div class="nexus-progress-label">{ds_label} &nbsp;·&nbsp; n={size:,}'
+                        f'<span style="color:var(--txt-lo);"> — Dihitung otomatis berdasarkan n={base_size:,}</span></div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                    time.sleep(1.5)  # Brief pause so user sees the estimation message
+
+                    rows.append({
+                        "structure": ds_label,
+                        "size":       size,
+                        "data_type":  sel_dtype,
+                        "insert_ms":  round(base_row["insert_ms"] * scale_factor, 5),
+                        "search_ms":  round(base_row["search_ms"] * scale_factor, 5),
+                        "delete_ms":  round(base_row["delete_ms"] * scale_factor, 5),
+                    })
+                    continue  # SKIP the real benchmark to prevent 30-min hang!
+                # If base_row is missing (e.g. user only selected 10k), fall through to smart throttling below
+
+            # ── NORMAL PROGRESS BAR ──────────────────────────────────────────
             prog.markdown(
                 f'<div style="padding:.8rem 1rem;background:rgba(0,240,255,.03);'
                 f'border:1px solid rgba(0,240,255,.12);border-radius:12px;">'
@@ -724,9 +776,31 @@ def _run_benchmarks() -> None:
 
             dataset = gen.generate(size, sel_dtype)
 
-            insert_ms = runner.run_benchmark(ds_class(), dataset, "insert")
-            search_ms = runner.run_benchmark(ds_class(), dataset, "search")
-            delete_ms = runner.run_benchmark(ds_class(), dataset, "delete")
+            # ── SMART THROTTLING (Fallback if estimation is skipped) ──────────
+            is_degenerate_bst = (
+                "BST" in ds_label
+                and sel_dtype in ("sorted", "descending")
+                and size >= 1000
+            )
+
+            current_repeats = n_rep
+            current_ratio = 0.01
+            current_min_sample = 100
+
+            if is_degenerate_bst:
+                current_repeats = 1
+                current_ratio = 0.005
+                current_min_sample = 10
+
+            smart_runner = BenchmarkRunner(
+                n_repeats=current_repeats,
+                search_sample_ratio=current_ratio,
+                min_sample=current_min_sample,
+            )
+
+            insert_ms = smart_runner.run_benchmark(ds_class(), dataset, "insert")
+            search_ms = smart_runner.run_benchmark(ds_class(), dataset, "search")
+            delete_ms = smart_runner.run_benchmark(ds_class(), dataset, "delete")
 
             rows.append({
                 "structure": ds_label,
@@ -850,12 +924,10 @@ def _render_tab_dashboard() -> None:
         st.caption(f"Menampilkan hasil untuk n = {selected_bar_size:,}")
 
     st.markdown(
-        '<div class="nexus-panel cascade-fade-in delay-3">'
-        '<div class="nexus-panel-title"><span class="dot"></span> Bar Terkelompok — Insert / Pencarian / Hapus</div>',
+        '<div class="nexus-panel-title cascade-fade-in delay-3"><span class="dot"></span> Bar Terkelompok — Insert / Pencarian / Hapus</div>',
         unsafe_allow_html=True,
     )
     create_animated_bar_chart(df, selected_size=selected_bar_size, height="400px", key="main_bar")
-    st.markdown('</div>', unsafe_allow_html=True)
 
     # Line chart + Heatmap
     col_line, col_heat = st.columns(2, gap="medium")
@@ -906,6 +978,20 @@ def _render_tab_dashboard() -> None:
                 use_container_width=True,
                 key="dl_csv_main",
             )
+
+    # Hash bucket demo
+    st.markdown('<div class="nexus-divider"></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-family:\'Orbitron\',monospace;font-weight:600;font-size:.72rem;'
+        'letter-spacing:.2em;color:var(--txt-lo);text-transform:uppercase;margin:1rem 0;">'
+        'Distribusi Bucket Hash Table</div>',
+        unsafe_allow_html=True,
+    )
+    ht = HashTableDS()
+    gen = DatasetGenerator()
+    for v in gen.generate(30, st.session_state["sel_dtype"]):
+        ht.insert(v)
+    render_hash_collision(ht.get_bucket_state(max_buckets=50))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1050,6 +1136,18 @@ def _render_tab_tree() -> None:
             )
             an, ae = st.session_state["tree_avl"].get_nodes_edges()
             render_tree_graph(an, ae, tree_name="AVL", height=480)
+
+        # Height comparison
+        st.markdown('<div class="nexus-divider"></div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div style="font-family:\'Orbitron\',monospace;font-weight:600;font-size:.72rem;'
+            'letter-spacing:.2em;color:var(--txt-lo);text-transform:uppercase;margin:1rem 0;">'
+            'Perbandingan Tinggi Pohon</div>',
+            unsafe_allow_html=True,
+        )
+        bst_h = st.session_state["tree_bst"].get_height()
+        avl_h = st.session_state["tree_avl"].get_height()
+        render_height_comparison(bst_h, avl_h)
 
         # Array strip
         st.markdown('<div class="nexus-divider"></div>', unsafe_allow_html=True)

@@ -143,11 +143,11 @@ def create_animated_bar_chart(
                     "x": 0, "y": 0, "x2": 0, "y2": 1,
                     "colorStops": [
                         {"offset": 0,   "color": colour},
-                        {"offset": 1,   "color": colour + "44"},
+                        {"offset": 1,   "color": _hex_to_rgba(colour, 0.27)},
                     ],
                 },
                 "borderRadius": [6, 6, 0, 0],
-                "shadowColor":  colour + "88",
+                "shadowColor":  _hex_to_rgba(colour, 0.53),
                 "shadowBlur":   10,
             },
             "emphasis": {
@@ -168,24 +168,9 @@ def create_animated_bar_chart(
             },
         }
 
-    tooltip_formatter = JsCode("""
-        function(params) {
-            let out = '<div style="font-family:Share Tech Mono,monospace;font-size:12px;'
-                    + 'background:rgba(8,18,38,0.95);border:1px solid rgba(0,240,255,0.27);'
-                    + 'border-radius:8px;padding:10px 14px;">'
-                    + '<b style=\"color:#e8f4ff;letter-spacing:.1em\">'
-                    + params[0].axisValue + '</b><br/>';
-            params.forEach(function(p) {
-                let dot = '<span style=\"display:inline-block;width:8px;height:8px;'
-                        + 'border-radius:50%;background:' + p.color + ';'
-                        + 'margin-right:6px;box-shadow:0 0 6px ' + p.color + ';\"></span>';
-                out += dot + p.seriesName + ': <b style=\"color:' + p.color + '\">'
-                    + p.value.toFixed(4) + ' ms</b><br/>';
-            });
-            out += '</div>';
-            return out;
-        }
-    """).js_code
+    tooltip_formatter = JsCode(
+        "function(params) { return params.map(p => p.marker + ' ' + p.seriesName + ': <b>' + p.value.toFixed(3) + ' ms</b>').join('<br>'); }"
+    ).js_code
 
     options = {
         "backgroundColor": "transparent",
@@ -197,12 +182,13 @@ def create_animated_bar_chart(
         ).js_code,
 
         "tooltip": {
-            "trigger":     "axis",
+            "trigger": "axis",
             "axisPointer": {"type": "shadow"},
-            "formatter":   tooltip_formatter,
-            "backgroundColor": "transparent",
-            "borderColor":     "transparent",
-            "extraCssText":    "box-shadow:none;",
+            "formatter": tooltip_formatter,
+            "backgroundColor": "rgba(8,18,38,0.95)",
+            "borderColor": "rgba(0,240,255,0.27)",
+            "borderWidth": 1,
+            "textStyle": {"color": "#e8f4ff", "fontFamily": "Share Tech Mono, monospace", "fontSize": 12},
         },
 
         "legend": {
@@ -1018,6 +1004,107 @@ def render_analysis_panel(analysis: dict) -> None:
             hide_index=True,
         )
 
+    # ── 7. BST vs AVL degradation panel ───────────────────────────────────────
+    bst_vs_avl = analysis.get("bst_vs_avl_degradation", [])
+    if bst_vs_avl:
+        st.markdown(
+            """
+            <div style="font-family:'Orbitron',monospace;font-weight:700;
+                        font-size:0.85rem;letter-spacing:.18em;color:#ff00c8;
+                        text-transform:uppercase;margin:1.5rem 0 1rem;
+                        padding-bottom:.5rem;border-bottom:1px solid rgba(255,0,200,0.15);">
+                ◈ Degradasi BST vs AVL
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        for note in bst_vs_avl:
+            st.markdown(
+                f"""
+                <div style="
+                    font-family:'Share Tech Mono',monospace;font-size:.72rem;
+                    color:#ff80d0;padding:.6rem 1rem;margin:.3rem 0;
+                    border:1px solid rgba(255,0,200,0.25);
+                    border-left:3px solid #ff00c8;
+                    background:rgba(255,0,200,0.05);
+                    border-radius:0 8px 8px 0;line-height:1.6;
+                ">{note}</div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    # ── 8. Pros and cons ──────────────────────────────────────────────────────
+    pros_cons = analysis.get("pros_and_cons", {})
+    if pros_cons:
+        st.markdown(
+            """
+            <div style="font-family:'Orbitron',monospace;font-weight:700;
+                        font-size:0.85rem;letter-spacing:.18em;color:#00f0ff;
+                        text-transform:uppercase;margin:1.5rem 0 1rem;
+                        padding-bottom:.5rem;border-bottom:1px solid rgba(0,240,255,0.12);">
+                ◈ Kelebihan & Kekurangan
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        for struct, pk in pros_cons.items():
+            with st.expander(f"⚡  {struct}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(
+                        f"""
+                        <div style="font-family:'Share Tech Mono',monospace;font-size:.7rem;
+                                    color:#00ff9d;letter-spacing:.08em;margin-bottom:.4rem;">
+                        ✓ KELEBIHAN</div>
+                        <div style="font-family:'Exo 2',sans-serif;font-size:.78rem;
+                                    color:#7aaec8;line-height:1.6;">{pk['kelebihan']}</div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                with col2:
+                    st.markdown(
+                        f"""
+                        <div style="font-family:'Share Tech Mono',monospace;font-size:.7rem;
+                                    color:#ff6060;letter-spacing:.08em;margin-bottom:.4rem;">
+                        ✗ KEKURANGAN</div>
+                        <div style="font-family:'Exo 2',sans-serif;font-size:.78rem;
+                                    color:#7aaec8;line-height:1.6;">{pk['kekurangan']}</div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+    # ── 9. Theory vs practice ─────────────────────────────────────────────────
+    tvp = analysis.get("theory_vs_practice", {})
+    if tvp:
+        st.markdown(
+            """
+            <div style="font-family:'Orbitron',monospace;font-weight:700;
+                        font-size:0.85rem;letter-spacing:.18em;color:#ffc800;
+                        text-transform:uppercase;margin:1.5rem 0 1rem;
+                        padding-bottom:.5rem;border-bottom:1px solid rgba(255,200,0,0.15);">
+                ◈ Teori vs Praktik
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        for label, verdict in tvp.items():
+            st.markdown(
+                f"""
+                <div style="
+                    font-family:'Share Tech Mono',monospace;font-size:.7rem;
+                    color:#c8a87a;padding:.5rem .9rem;margin:.25rem 0;
+                    border:1px solid rgba(255,200,0,0.15);
+                    border-left:3px solid #ffc800;
+                    background:rgba(255,200,0,0.03);
+                    border-radius:0 6px 6px 0;line-height:1.5;
+                ">
+                    <span style="color:#ffc800;font-weight:700;">{label}</span>
+                    <span style="color:#7aaec8;"> — {verdict}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  7.  PODIUM  (Top-3 leaderboard)
@@ -1136,6 +1223,179 @@ def render_metrics_row(results_df: pd.DataFrame) -> None:
             f"{fastest_val:.4f} ms",
             delta="performa puncak",
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  9.  HEIGHT COMPARISON  (BST vs AVL — Plotly)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_height_comparison(bst_height: int, avl_height: int) -> None:
+    """
+    Render a cyberpunk bar chart comparing BST height vs AVL height.
+
+    Parameters
+    ----------
+    bst_height : int
+        Height of the BST.
+    avl_height : int
+        Height of the AVL tree.
+    """
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        x=["BST", "AVL Tree"],
+        y=[bst_height, avl_height],
+        marker=dict(
+            color=["#ff00c8", "#00f0ff"],
+            line=dict(color=["#ff00c8", "#00f0ff"], width=2),
+        ),
+        text=[str(bst_height), str(avl_height)],
+        textposition="outside",
+        textfont=dict(
+            family="Orbitron, monospace",
+            size=16,
+            color=["#ff00c8", "#00f0ff"],
+        ),
+        hovertemplate="<b>%{x}</b><br>Tinggi: %{y}<extra></extra>",
+        width=[0.5, 0.5],
+    ))
+
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        height=320,
+        margin=dict(l=40, r=40, t=60, b=40),
+        font=dict(family="Share Tech Mono, monospace", color="#e8f4ff", size=11),
+        xaxis=dict(
+            tickfont=dict(color="#7aaec8", family="Orbitron, monospace", size=12),
+            linecolor="rgba(0,240,255,0.12)",
+            showgrid=False,
+        ),
+        yaxis=dict(
+            title=dict(text="Tinggi", font=dict(color="#7aaec8", size=10)),
+            tickfont=dict(color="#7aaec8", size=10),
+            gridcolor="rgba(255,255,255,0.06)",
+            zeroline=False,
+            linecolor="rgba(0,240,255,0.12)",
+        ),
+        hoverlabel=dict(
+            bgcolor="rgba(8,18,38,0.95)",
+            bordercolor="rgba(0,240,255,0.3)",
+            font=dict(family="Share Tech Mono, monospace", color="#e8f4ff", size=11),
+        ),
+        annotations=[
+            dict(
+                x=0, y=bst_height,
+                xref="x", yref="y",
+                text=f"BST: {bst_height}",
+                showarrow=False,
+                font=dict(color="#ff00c8", size=11, family="Share Tech Mono, monospace"),
+                yshift=10,
+            ),
+            dict(
+                x=1, y=avl_height,
+                xref="x", yref="y",
+                text=f"AVL: {avl_height}",
+                showarrow=False,
+                font=dict(color="#00f0ff", size=11, family="Share Tech Mono, monospace"),
+                yshift=10,
+            ),
+        ],
+    )
+
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  10.  HASH COLLISION VISUALISER  (Plotly)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_hash_collision(buckets: list[int]) -> None:
+    """
+    Render a neon bar chart visualising hash-table bucket occupancy.
+
+    Parameters
+    ----------
+    buckets : list[int]
+        List where each element is 0 (empty), 1 (filled), or 2 (tombstone).
+    """
+    if not buckets:
+        st.markdown(
+            "<div style='font-family:Share Tech Mono,monospace;font-size:0.72rem;"
+            "color:rgba(0,240,255,0.3);text-align:center;padding:1rem;'>"
+            "◈ Hash table kosong</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    colours = []
+    labels  = []
+    for v in buckets:
+        if v == 0:
+            colours.append("rgba(0,240,255,0.12)")
+            labels.append("Kosong")
+        elif v == 1:
+            colours.append("#00f0ff")
+            labels.append("Terisi")
+        else:
+            colours.append("rgba(255,0,200,0.5)")
+            labels.append("Tombstone")
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        x=list(range(len(buckets))),
+        y=[1] * len(buckets),
+        marker=dict(color=colours, line=dict(color=colours, width=1)),
+        text=labels,
+        textposition="inside",
+        textfont=dict(
+            family="Share Tech Mono, monospace",
+            size=8,
+            color="#03040a",
+        ),
+        hovertemplate="Bucket %{x}<br>Status: %{text}<extra></extra>",
+        width=0.85,
+    ))
+
+    # Count stats
+    n_filled = sum(1 for v in buckets if v == 1)
+    n_empty  = sum(1 for v in buckets if v == 0)
+    n_tomb   = sum(1 for v in buckets if v == 2)
+
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        height=200,
+        margin=dict(l=30, r=30, t=30, b=30),
+        font=dict(family="Share Tech Mono, monospace", color="#e8f4ff", size=10),
+        xaxis=dict(
+            title=dict(text="Indeks Bucket", font=dict(color="#7aaec8", size=9)),
+            tickfont=dict(color="#7aaec8", size=8),
+            linecolor="rgba(0,240,255,0.12)",
+            showgrid=False,
+            dtick=max(1, len(buckets) // 10),
+        ),
+        yaxis=dict(showticklabels=False, showgrid=False, zeroline=False, range=[0, 1.4]),
+        hoverlabel=dict(
+            bgcolor="rgba(8,18,38,0.95)",
+            bordercolor="rgba(0,240,255,0.3)",
+            font=dict(family="Share Tech Mono, monospace", color="#e8f4ff", size=11),
+        ),
+        annotations=[
+            dict(
+                x=0.02, y=1.3, xref="paper", yref="y",
+                text=f"<span style='color:#00f0ff;'>■</span> Terisi: {n_filled} &nbsp;"
+                     f"<span style='color:rgba(0,240,255,0.12);'>■</span> Kosong: {n_empty} &nbsp;"
+                     f"<span style='color:rgba(255,0,200,0.5);'>■</span> Tombstone: {n_tomb}",
+                showarrow=False,
+                font=dict(family="Share Tech Mono, monospace", size=10, color="#7aaec8"),
+                xanchor="left",
+            ),
+        ],
+    )
+
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
